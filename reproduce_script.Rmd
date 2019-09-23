@@ -1,0 +1,1240 @@
+---
+title: GGM compare
+author: Donald R. Williams
+date: September 09, 2020
+output: html_document
+---
+
+
+# Simulation 1: error rate under null hypothesis
+```{r, message=FALSE}
+# packages
+library(BGGM)
+library(MASS)
+library(dplyr)
+library(knitr)
+library(corpcor)
+library(ggplot2)
+library(cowplot)
+library(igraph)
+library(ggraph)
+library(reshape)
+library(ggridges)
+library(qgraph)
+
+# windows font
+windowsFonts(Times = windowsFont("Times New Roman")) 
+```
+
+```{r, eval = FALSE}
+# sample sizes
+n1 <- c(250, 500, 1000)
+n2 <- c(250, 500, 1000)
+
+# number of variable
+p <- 16
+
+# simulation conditions
+sim_cond <- rbind(cbind(n1, n2),  cbind(n1, n2 * .5))
+
+# correlation to partial correlation
+pcors <- cor2pcor(ptsd_cor4)
+
+# threshold values less than 0.05
+pcors <- ifelse(abs(pcors) < 0.05, 0, pcors)
+
+# "true" covariance matrix
+cov_mat <- pcor2cor(pcors)
+
+
+map_func <- function(n1, n2){
+# groups
+Y_g1 <- MASS::mvrnorm(n1, rep(0, 16), Sigma = cov_mat)
+Y_g2 <- MASS::mvrnorm(n2, rep(0, 16), Sigma = cov_mat)
+
+# fit model
+fit <- ggm_compare_ppc(Y_g1, Y_g2, 
+                       type = "global", 
+                       iter = 1000)
+
+# yes: equal sample sizeshey
+if(n1 == n2){
+  results <- data.frame(p = fit$pvalue, n = n1,  type = "equal")
+}
+# not: equal sample sizes
+else{
+  results <- data.frame(p = fit$pvalue, n = n1,  type = "unequal")
+  }
+# return
+return(results)
+}
+
+# simulation
+simulation <- pbapply::pbreplicate(1000,
+                          do.call(rbind.data.frame, mapply(map_func,
+                                                           n1 = sim_cond[,1],
+                                                           n2 = sim_cond[,2],
+                                                           SIMPLIFY = F)), simplify = F)
+# results_sim1 <- do.call(rbind.data.frame, simulation)
+# save(results_sim1, file = "results_sim1.Rdata")
+# write.csv(results_sim1, file = "results_sim1.csv")
+```
+
+```{r}
+load("results_sim1.Rdata")
+results_sim1 %>% 
+    group_by(n, type) %>% 
+     summarise(Error_rate = mean(p < 0.05), 
+               MCE = (mean(p < 0.05) * (1 - mean(p < 0.05)))/ sqrt(n()) ) %>%
+  kable()
+```
+
+
+# Example plot: predictive distribution
+```{r, message=F, eval = F}
+pcors <- cor2pcor(ptsd_cor4)
+
+# threshold values less than 0.05
+pcors <- ifelse(abs(pcors) < 0.05, 0, pcors)
+
+# "true" covariance matrix
+cov_mat <- pcor2cor(pcors)
+
+# n = 250
+n1 <- 250
+n2 <- 250
+Y_g1 <- MASS::mvrnorm(n1, rep(0, 16), cov_mat)
+Y_g2 <- MASS::mvrnorm(n2, rep(0, 16), cov_mat)
+
+# fit 250
+fit_250 <- ggm_compare_ppc(Y_g1, Y_g2, type = "global", iter = 10000)
+
+
+# n = 500
+n1 <- 500
+n2 <- 500
+Y_g1 <- MASS::mvrnorm(n1, rep(0, 16), cov_mat)
+Y_g2 <- MASS::mvrnorm(n2, rep(0, 16), cov_mat)
+
+# fit 500
+fit_500 <-   ggm_compare_ppc(Y_g1, Y_g2, type = "global", iter = 10000)
+
+
+# n = 1000
+n1 <- 1000
+n2 <- 1000
+Y_g1 <- MASS::mvrnorm(n1, rep(0, 16), cov_mat)
+Y_g2 <- MASS::mvrnorm(n2, rep(0, 16), cov_mat)
+
+# fit 1000
+fit_1000 <- ggm_compare_ppc(Y_g1, Y_g2, 
+                            type = "global", 
+                            iter = 10000)
+
+
+# predictive JSD (symmetric KL)
+ppc <- c(fit_250$predictive_risk, 
+         fit_500$predictive_risk, 
+         fit_1000$predictive_risk)
+
+# data predictive JSD
+dat_ppc <- data.frame(ppc = unlist(ppc),
+                      contrast = rep(c("250", "500", "1000"), each = 10000))
+
+# factor levels
+dat_ppc$contrast <- factor(dat_ppc$contrast, 
+                           labels = c("250", "500", "1000"),  
+                           levels = c("250", "500", "1000")) 
+
+# observed JSD 
+obs <- c(fit_250$obs_jsd[[1]], 
+         fit_500$obs_jsd[[1]], 
+         fit_1000$obs_jsd[[1]])
+dat_obs <- data.frame(ppc = obs, contrast =  c("250", "500", "1000"))
+
+# factor levels
+dat_obs$contrast <- factor(dat_obs$contrast, 
+                           labels = c("250", "500", "1000"),  
+                           levels = c("250", "500", "1000")) 
+
+
+
+critical = 0.05
+col_noncritical = "#84e184A0" 
+col_critical = "red"
+point_size = 3
+
+# plot 1A
+plot_1A <- ggplot(dat_ppc, aes(x = ppc,
+                           y = as.factor(contrast),
+                           fill = factor(..quantile..))) +
+  stat_density_ridges(geom = "density_ridges_gradient",
+                      calc_ecdf = TRUE, 
+                      alpha = 0.5,
+                      quantiles = c(0.025, 1 - (critical))) +
+  scale_fill_manual( values = c(col_noncritical, 
+                                col_noncritical, 
+                                col_critical)) +
+  theme(legend.position = "none") +
+  scale_y_discrete(expand = c(0.05, 0)) +
+  theme_bw(base_family = "Times", 
+           base_size = 14) +
+  theme(legend.position = "none", 
+        panel.grid = element_blank()) +
+  geom_point(inherit.aes = F,
+           data = dat_obs,
+           aes(x = ppc,
+               y = contrast),
+           size = point_size) +
+  ylab("Sample Size") +
+  xlab("Predictive Distribution") 
+
+#save(plot_1A, file = "plot_1A.Rdata" )
+```
+
+# Simulation 2: Comparison to NCT
+```{r, eval = FALSE}
+# total n
+n_total <- c(500, 1000, 2000)
+
+# sample sizes
+n1 <-  c(c(250, 500, 1000), n_total * .6,  n_total -  n_total * .6)
+n2  <- c(c(250, 500, 1000), n_total -  n_total * .6, n_total * .6)
+
+# df condition
+df_cond <- rbind(cbind.data.frame(n1, n2, cut = 0.075, type = "cut"),
+                 cbind.data.frame(n1, n2, cut = 0, type = "reduce"), 
+                 cbind.data.frame(n1, n2, cut = 0.075, type = "both"))
+
+for(j in 1:nrow(df_cond)){
+  for(i in 1:100){
+    
+    print(paste("condition", j, "iteration", i))
+    
+    # simulation condition
+    df_sim <- df_cond[j,]
+    
+    # baseline partial correlation matrix
+    pcor4 <- corpcor::cor2pcor(as.matrix(BGGM::ptsd_cor4))
+    pcor4 <- ifelse(abs(pcor4) < 0.05, 0, pcor4) 
+    
+    # cut values less than 0.075
+    if(df_sim$type == "cut"){
+      pcor4_new <- ifelse(abs(pcor4) < df_sim$cut, 0, pcor4)
+    }
+    # reduce largest by 75 %
+    if(df_sim$type == "reduce"){
+      pcor4_new <- pcor4
+      pcor4_new[1,3] <-  pcor4[1,3] *.75 
+      pcor4_new[3,1] <-  pcor4[1,3] *.75
+      
+    }
+   # reduce and cut
+    if(df_sim$type == "both"){
+      pcor4_new <- ifelse(abs(pcor4) < df_sim$cut, 0, pcor4)
+      pcor4_new[1,3] <-  pcor4[1,3] *.75 
+      pcor4_new[3,1] <-  pcor4[1,3] *.75
+    }
+    
+    # baseline correlation matrix
+    cor4 <- corpcor::pcor2cor(pcor4)
+    
+    # altered correlation matrix
+    cor4_new <- corpcor::pcor2cor(pcor4_new)
+    
+    # generate data
+    Y_g1 <- MASS::mvrnorm(df_sim$n1, mu = rep(0, 16), Sigma =  cor4)
+    Y_g2 <- MASS::mvrnorm(df_sim$n2, mu = rep(0, 16), Sigma =  cor4_new)
+    
+    # predictive method 
+    ppc <- ggm_compare_ppc(Y_g1, Y_g2, 
+                           type = "global", 
+                           iter = 500, 
+                           cores = 2)
+    
+    # ppc p-value
+    ppc_pvalue <-  ifelse(ppc$pvalue <=  0.05, 1, 0)
+   
+    # NCT method
+    suppressMessages({nct <- NetworkComparisonTest::NCT(Y_g1, 
+                                                        Y_g2, 
+                                                        it = 500, 
+                                                        gamma = 0.5, 
+                                                        progressbar = F)})
+    
+    # nct p-value
+    nct_glstr_pvalue   <- ifelse(nct$glstrinv.pval <= 0.05, 1, 0)
+    nct_nwinv_pvalue   <- ifelse(nct$nwinv.pval <= 0.05, 1, 0)
+    
+    if(df_sim$n1 == df_sim$n2){
+      which_cut <- "equal" 
+      }
+    if(df_sim$n1 < df_sim$n2){
+      which_cut <- "large_cut" 
+    }
+    if(df_sim$n1 > df_sim$n2){
+      which_cut <- "small_cut" 
+    }
+    # returned results for "i" iterations
+    res_i[[i]] <- data.frame(method = c("ppc", "nct_glstr", "nct_nwinv"), 
+                            n1 = df_sim$n1, n2 = df_sim$n2, 
+                            total_n = df_sim$n1 + df_sim$n2,
+                            cutoff = df_sim$cut, 
+                            which_cut = which_cut,
+                            type = df_sim$type,
+                            score = c(ppc_pvalue, 
+                                      nct_glstr_pvalue,  
+                                      nct_nwinv_pvalue))
+    }
+  
+  # returned results for "j" conditions
+  res_j[[j]] <- do.call(rbind.data.frame, res_i)
+  
+}
+
+#results_sim2 <- res_j
+#save(results_sim2, file = "results_sim2.Rdata")
+```
+
+# Simulation 2: plot 1B
+```{r}
+load("results_sim2.Rdata")
+
+# combine results
+df_results <- do.call(rbind.data.frame, results_sim2) 
+
+# rename for facets
+df_results$type <- factor(df_results$type, 
+                          levels = c("cut", "reduce", "both"), 
+                          labels = c("Cut", "Reduce", "Both"))
+
+df_results$which_cut <- factor(df_results$which_cut, 
+                               levels = c("equal", "small_cut", "large_cut"),
+                               labels =  c("Equal", 
+                                           "Smallest Group Changed", 
+                                           "Largest Group Chanaged"))
+
+# plot 1B
+plot_1B <- df_results %>%
+group_by(method, total_n, which_cut, type) %>% 
+  summarise(mu_score = mean(score)) %>% 
+  ggplot(aes(x = as.factor(total_n), 
+             y = mu_score, 
+             group = method, 
+             color = method)) +
+  facet_grid(type ~  which_cut) +
+  theme_bw(base_family = "Times", 
+           base_size = 14) +
+  geom_line(size = 1.5) +
+  theme(legend.position = "top", 
+        strip.background = element_rect(fill = "grey94"),
+        panel.spacing = unit(.5, "lines"),
+        panel.grid.minor.y = element_blank(),
+        legend.background = element_rect(color = "black"), 
+        panel.grid = element_line(color = "grey97")) +
+  ylab("Power") +
+  xlab("Sample Size") +
+  scale_color_manual(values = c("#009E73", "#D55E00", "#0072B2"), 
+                     name = "Method", 
+                     breaks = c("ppc", "nct_glstr", "nct_nwinv"), 
+                     labels = c("Predictive", "NCT (a)", "NCT (b)") )
+
+#save(plot_1B, file = "plot_1B.Rdata" )
+```
+
+
+# Illustrative Example: predictive
+```{r, eval = FALSE}
+Y_g1 <- MASS::mvrnorm(n = 526, rep(0, 16), Sigma = BGGM::ptsd_cor1, empirical = T)
+Y_g2 <- MASS::mvrnorm(n = 365, rep(0, 16), Sigma = BGGM::ptsd_cor2, empirical = T)
+Y_g3 <- MASS::mvrnorm(n = 926, rep(0, 16), Sigma = BGGM::ptsd_cor3, empirical = T)
+Y_g4 <- MASS::mvrnorm(n = 956, rep(0, 16), Sigma = BGGM::ptsd_cor4, empirical = T)
+
+fit <- ggm_compare_ppc(Y_g1, Y_g2, 
+                       Y_g3, Y_g4, 
+                       type = "global", 
+                       iter = 5000, 
+                       cores = 4)
+
+# save(fit, file = "fit.Rdata")
+```
+
+
+# Plot 1C
+```{r,message=F, warning=F, eval=FALSE}
+fit_node <- ggm_compare_ppc(Y_g1, Y_g2, Y_g3, Y_g4, type = "nodewise", iter = 5000, cores = 4)
+
+load("fit.Rdata")
+
+plot_1C <- plot(fit, log = TRUE, point_size = 3) + 
+  theme_bw(base_family = "Times", 
+           base_size = 14) +
+  theme(legend.position = "none", 
+        panel.grid = element_blank()) +
+  scale_y_discrete(expand = c(0.05, 0)) +
+  ylab("Sample Size") +
+  xlab("Predictive Distribution") 
+
+# save(plot_1C, file = "plot_1C.Rdata" )
+```
+
+# Nodewise results
+```{r}
+load("fit_node.Rdata")
+
+for(i in 1:6){
+critical <- apply(log(do.call(rbind, fit_node$predictive_risk[[i]])), 2, quantile,  0.95)
+obs <- log(as.numeric(fit_node$obs_jsd[[i]]))
+p <- as.numeric(fit_node$pvalue[[i]])
+node <- 1:16
+print(kable(data.frame(node = node, 
+                       critical = critical, 
+                       observed = obs, 
+                       p_value = p),
+            digits = 2, 
+            caption = fit_node$names[[i]]))
+}
+```
+
+
+
+# Simulation 3: Hyperparameter Selection
+```{r, eval = FALSE}
+cond <- expand.grid(d = c(10, 20, 40),
+                    n = c(100, 200, 400),
+                    groups = c(2,3,4),
+                    reduce = c(0, 0.25, 0.75, 1))
+
+
+res_i <- list()
+res_j <- list()
+
+for(j in 1:nrow(cond)){
+  for(i in 1:100){
+
+    print( paste("condition", j, "iteration", i) )
+    sim_cond <- cond[j,]
+
+    if(sim_cond$groups == 2){
+      samp_reduce <- 0.4639371 * sim_cond$reduce
+
+      mat_dif <- corpcor::cor2pcor(BGGM::ptsd_cor4)
+
+      mat_dif[1,3] <- samp_reduce
+      mat_dif[3,1] <- samp_reduce
+
+      X1 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = corpcor::pcor2cor(mat_dif),
+                          empirical = F)
+
+      X2 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = BGGM::ptsd_cor4,
+                          empirical = F)
+
+      fit <- ggm_compare_bf(X1, X2,
+                     prior_sd = 1/sqrt(sim_cond$d),
+                     iter = 5000,
+                     cores = 2)
+
+      BF_10 <- 1 / fit$BF_01[1,3]
+      prob_10 <- BF_10 / (BF_10 + 1)
+
+
+     res <-  data.frame(n = sim_cond$n,
+                         delta = sim_cond$d,
+                         groups = sim_cond$groups,
+                         reduce = sim_cond$reduce,
+                         prob_10 = prob_10,
+                         diff = samp_reduce -  0.4639371 )
+
+    }
+
+
+    if(sim_cond$groups == 3){
+      samp_reduce <- 0.4639371 * sim_cond$reduce
+
+      mat_dif <- corpcor::cor2pcor(BGGM::ptsd_cor4)
+
+      mat_dif[1,3] <- samp_reduce
+      mat_dif[3,1] <- samp_reduce
+
+      X1 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = corpcor::pcor2cor(mat_dif),
+                          empirical = F)
+
+      X2 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = BGGM::ptsd_cor4,
+                          empirical = F)
+
+      X3 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = BGGM::ptsd_cor4,
+                          empirical = F)
+
+      fit <- ggm_compare_bf(X1, X2, X3,
+                            prior_sd = 1/sqrt(sim_cond$d),
+                            iter = 5000,
+                            cores = 2)
+
+      BF_10 <- 1 / fit$BF_01[1,3]
+      prob_10 <- BF_10 / (BF_10 + 1)
+
+
+      res <-  data.frame(n = sim_cond$n,
+                         delta = sim_cond$d,
+                         groups = sim_cond$groups,
+                         reduce = sim_cond$reduce,
+                         prob_10 = prob_10,
+                         diff = samp_reduce -  0.4639371)
+      }
+
+
+    if(sim_cond$groups == 4){
+
+      samp_reduce <- 0.4639371 * sim_cond$reduce
+
+      mat_dif <- corpcor::cor2pcor(BGGM::ptsd_cor4)
+
+      mat_dif[1,3] <- samp_reduce
+      mat_dif[3,1] <- samp_reduce
+
+      X1 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = corpcor::pcor2cor(mat_dif),
+                          empirical = F)
+
+      X2 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = BGGM::ptsd_cor4,
+                          empirical = F)
+
+      X3 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = BGGM::ptsd_cor4,
+                          empirical = F)
+
+      X4 <- MASS::mvrnorm(n = sim_cond$n,
+                          rep(0, 16),
+                          Sigma = BGGM::ptsd_cor4,
+                          empirical = F)
+
+      fit <- ggm_compare_bf(X1, X2, X3, X4,
+                            prior_sd = 1/sqrt(sim_cond$d),
+                            iter = 5000,
+                            cores = 2)
+
+      BF_10 <- 1 / fit$BF_01[1,3]
+      prob_10 <- BF_10 / (BF_10 + 1)
+
+
+      res <-  data.frame(n = sim_cond$n,
+                         delta = sim_cond$d,
+                         groups = sim_cond$groups,
+                         reduce = sim_cond$reduce,
+                         prob_10 = prob_10,
+                         diff = samp_reduce -  0.4639371)
+    }
+    res_i[[i]] <- res
+    }
+  res_j[[j]] <- do.call(rbind.data.frame, res_i)
+  save(res_j, file = "res_j.Rdata")
+}
+
+# results_sim3 <- res_j
+# save(results_sim3, file = "results_sim3.Rdata")
+```
+
+# Simulation 3: Plot 1A
+```{r}
+load("results_sim3.Rdata")
+
+res_df_3 <- do.call(rbind.data.frame, results_sim3)
+
+res_df_3_summ <- res_df_3 %>%
+  group_by(n, delta, groups, diff) %>%
+  summarise(mu  = mean(prob_10),
+            low = HDInterval::hdi(prob_10, 0.90)[1],
+            up = HDInterval::hdi(prob_10, 0.90)[2],
+            sd = sd(prob_10))
+
+res_df_3_summ$groups <- factor(res_df_3_summ$groups,
+                               levels = c("2", "3", "4"),
+                               labels = c("2 Groups", 
+                                          "3 Groups", 
+                                          "4 Groups"))
+
+res_df_3_summ$n <- factor(res_df_3_summ$n,
+                          levels = c("100", 
+                                     "200", 
+                                     "400"),
+                          labels = c("n = 100", 
+                                     "n = 200", 
+                                     "n = 400"))
+
+plot_3A <- res_df_3_summ  %>% filter(n != "n = 400") %>%
+  ggplot(aes(x = as.factor(rev(diff)),
+             fill = as.factor(delta),
+             y = mu)) +
+  geom_errorbar(aes(ymax = up, ymin  = mu), 
+                position = position_dodge(1), 
+                width = 0, 
+                size = 1) +
+  geom_bar(stat = "identity", 
+           position = position_dodge(1)) +
+  geom_errorbar(aes(ymax = mu, ymin  = low),
+                position = position_dodge(1),
+                width = 0,
+                size = 1,
+                color = "white") +
+  theme_bw() +
+  facet_grid(n ~ groups) +
+  scale_fill_manual(name = "Method", 
+                    values = c( "#009E73", 
+                                "#0072B2", 
+                                "#CC79A7"),
+                    breaks = c("10", "20", "30", "40"),
+                    labels = c("  10", "  20", "  30", "  40")) +
+  scale_linetype_manual(name = "Method", 
+                        values = c("dotted", 
+                                   "longdash", 
+                                   "dotdash")) +
+  theme_bw(base_family = "Times", base_size = 13) +
+  theme(legend.position = "none", 
+        strip.background = element_rect(fill = "grey93"),
+        panel.grid.minor.y = element_blank(),
+        legend.background = element_rect(color = "black"),
+        panel.grid = element_line(color = "grey93")) +
+  ylab("Posterior Probability (H_1)") +
+  xlab("Percent Reduction") +
+  scale_x_discrete( labels = c("0 %", "25 %", "75 %", "100 %"))
+
+# save(plot_3A, file = "plot_3A.Rdata")
+```
+
+# Simulation 4: Error Rates
+```{r, eval=FALSE}
+# partial correlations
+pcors <- corpcor::cor2pcor(BGGM::ptsd_cor4)
+
+# set less than 0.1 to zero
+pcors <- ifelse(abs(pcors) < 0.1, 0, pcors)
+
+# switch labels
+null_mat <- ifelse(pcors == 0, 1, 0)
+
+
+# mle fisher z
+mle_fisher <- function(x, y){
+  x <- scale(x, scale = F)
+  y <- scale(y, scale = F)
+  n <- nrow(x)
+  p <- ncol(x)
+  k  <- p - 1
+  mat <- matrix(0, p, p)
+  se_diff <- sqrt( (1 / (n - k - 3)) + (1 / (n - k - 3)) )
+  x_pcs  <- cov2cor(solve(nrow(x)^-1 *   t(x) %*% x)) * -1
+  y_pcs  <- cov2cor(solve(nrow(y)^-1 *   t(y) %*% y)) * -1
+  pcs_diff <- BGGM:::fisher_z(x_pcs[upper.tri(x_pcs)]) - BGGM:::fisher_z(y_pcs[upper.tri(y_pcs)])
+  z_score <- abs(pcs_diff / se_diff)
+  pvalues <- (1 - pnorm(z_score)) * 2
+  mat[upper.tri(mat)] <- ifelse(pvalues < 0.01, 1, 0)
+  mat
+}
+
+cond <- expand.grid(d = c(10, 20, 40),
+                    n = c(100, 250, 500, 1000),
+                    groups = c(2,3,4))
+
+
+res_i  <- list()
+res_j <- list()
+
+for(j in 1:nrow(cond)){
+  for(i in 1:100){
+    print( paste("condition", j, "iteration", i) )
+    sim_cond <- cond[j,]
+    
+    if(sim_cond$groups == 2){
+      
+      X1 <- MASS::mvrnorm(n = sim_cond$n, rep(0, 16), 
+                          Sigma = corpcor::pcor2cor(pcors), 
+                          empirical = F)
+      
+      X2 <- MASS::mvrnorm(n = sim_cond$n, rep(0, 16), 
+                          Sigma = diag(16), empirical = F)
+      
+      fit <- ggm_compare_bf(X1, X2, 
+                            prior_sd = 1/sqrt(sim_cond$d), 
+                            iter = 5000, 
+                            cores = 4)
+        
+      bf_select_10 <- ifelse(1 / fit$BF_01 > 3, 1, 0)
+      bf_select_01 <- ifelse(fit$BF_01 > 3, 1, 0)
+      
+      res_10 <-  BGGM:::performance(True = bf_select_10, 
+                                    Estimate = pcors)$results[1:2,2]
+      
+      res_01 <-  BGGM:::performance(True = bf_select_01, 
+                                    Estimate = null_mat)$results[1:2,2]
+      
+      fit_mle <- mle_fisher(X1, X2)
+      mle_10 <-   BGGM:::performance(True = fit_mle, 
+                                     Estimate = pcors)$results[1:2,2]
+      
+      
+      res <- data.frame(n = sim_cond$n,
+                        delta= sim_cond$d,
+                        groups = sim_cond$groups,
+                        method = rep(c("BF_alt", "BF_null", "mle"), 2),
+                        measure = rep( c("SPC", "SN"), each = 3 ),
+                        score = as.numeric(c(res_10[1], res_01[1], mle_10[1],
+                                             res_10[2], res_01[2], mle_10[2])))
+      
+    }
+    
+    
+    if(sim_cond$groups == 3){
+      
+      X1 <- MASS::mvrnorm(n = sim_cond$n, 
+                          rep(0, 16), 
+                          Sigma = corpcor::pcor2cor(pcors), 
+                          empirical = F)
+      X2 <- MASS::mvrnorm(n = sim_cond$n, 
+                          rep(0, 16), 
+                          Sigma = diag(16), 
+                          empirical = F)
+      X3 <- MASS::mvrnorm(n = sim_cond$n, 
+                          rep(0, 16), 
+                          Sigma = diag(16), 
+                          empirical = F)
+      
+      fit <- ggm_compare_bf(X1, X2, X3,
+                            prior_sd = 1/sqrt(sim_cond$d), 
+                            iter = 5000, 
+                            cores = 4)
+      
+      
+      bf_select_10 <- ifelse(1 / fit$BF_01 > 3, 1, 0)
+      bf_select_01 <- ifelse(fit$BF_01 > 3, 1, 0)
+      
+      
+      res_10 <-  BGGM:::performance(True =  bf_select_10, 
+                                    Estimate = pcors)$results[1:2, 2]
+      
+      res_01 <-  BGGM:::performance(True = bf_select_01, 
+                                     Estimate = null_mat)$results[1:2,2]
+      
+      
+      
+      res <- data.frame(n = sim_cond$n,
+                        delta= sim_cond$d,
+                        groups = sim_cond$groups,
+                        method = rep(c("BF_alt", "BF_null"), 2),
+                        measure = rep( c("SPC", "SN"), each = 2 ),
+                        score = as.numeric(c(res_10[1], res_01[1],
+                                             res_10[2], res_01[2])))
+      
+    }
+    
+    if(sim_cond$groups == 4){
+      
+      
+      X1 <- MASS::mvrnorm(n = sim_cond$n, 
+                          rep(0, 16), 
+                          Sigma = corpcor::pcor2cor(pcors), 
+                          empirical = F)
+      
+      X2 <- MASS::mvrnorm(n = sim_cond$n, 
+                          rep(0, 16), 
+                          Sigma = diag(16), 
+                          empirical = F)
+      
+      X3 <- MASS::mvrnorm(n = sim_cond$n, 
+                          rep(0, 16), 
+                          Sigma = diag(16), 
+                          empirical = F)
+      
+      X4 <- MASS::mvrnorm(n = sim_cond$n, 
+                          rep(0, 16), 
+                          Sigma = diag(16), 
+                          empirical = F)
+      
+      fit <- ggm_compare_bf(X1, X2, X3, X4,
+                            prior_sd = 1/sqrt(sim_cond$d), 
+                            iter = 5000, 
+                            cores = 4)
+      
+      
+      bf_select_10 <- ifelse(1 / fit$BF_01 > 3, 1, 0)
+      bf_select_01 <- ifelse(fit$BF_01 > 3, 1, 0)
+      
+      res_10 <-  BGGM:::performance(True =  bf_select_10, 
+                                    Estimate = pcors)$results[1:2, 2]
+      
+      res_01 <-  BGGM:::performance(True = bf_select_01, 
+                                    Estimate = null_mat)$results[1:2,2]
+      
+      
+      
+      res <- data.frame(n = sim_cond$n,
+                        delta= sim_cond$d,
+                        groups = sim_cond$groups,
+                        method = rep(c("BF_alt", "BF_null"), 2),
+                        measure = rep( c("SPC", "SN"), each = 2 ),
+                        score = as.numeric(c(res_10[1], res_01[1],
+                                             res_10[2], res_01[2])))
+      }
+    res_i[[i]] <- res
+    }
+  res_j[[j]] <- do.call(rbind.data.frame, res_i)
+  save(res_j, file = "res_j.Rdata")
+}
+
+# results_sim4 <- res_j
+# save(results_sim4, file = "results_sim4.Rdata")
+```
+
+# Simulation 4: Plot Legend
+```{r}
+load("results_sim4.Rdata")
+res_df_4 <- do.call(rbind.data.frame, results_sim4)
+
+res_df_4_summ <- res_df_4 %>%
+  group_by(n, delta, groups, method, measure) %>%
+  summarise(mu = mean(score), sd_score = sd(score),
+            up = HDInterval::hdi(score)[2],
+            low = HDInterval::hdi(score)[1] )
+
+res_df_4_summ$measure <- factor(res_df_4_summ$measure, 
+                                levels = c("SPC", "SN"), 
+                                labels = c("SPC", "SN"))
+
+res_df_4_summ$groups <- factor(res_df_4_summ$groups,
+                               levels = c("2", "3", "4"),
+                               labels = c("2 Groups", 
+                                          "3 Groups", 
+                                          "4 Groups"))
+
+# dummy data for mle
+mle_temp <-  res_df_4_summ %>% 
+  filter(method == "mle", 
+         delta == 10)
+
+mle_temp$delta <- 100
+
+res_df_4_summ <- res_df_4_summ %>% 
+                 filter(method != "mle")
+
+res_df_4_summ <- rbind(mle_temp, res_df_4_summ)
+
+
+# legend
+plt_leg <- res_df_4_summ %>%
+  filter(method != "BF_null") %>%
+  ggplot(aes(x = as.factor(n), 
+             y = mu, 
+             group = delta, 
+             fill = as.factor(delta))) +
+  geom_errorbar(aes(ymax = up, 
+                    ymin  = mu + 0, 
+                    group = as.factor(delta)),
+                position = position_dodge(1), 
+                width = 0, 
+                size = 1) +
+  geom_bar(stat = "identity", 
+           position = position_dodge(1)) +
+  geom_errorbar(aes(ymax = mu, 
+                    ymin  = low),
+                position = position_dodge(1),
+                width = 0,
+                size = 1,
+                color = "white") +
+  theme_bw() +
+  facet_grid(measure ~ groups) +
+  scale_fill_manual(name = "Method", values = c( "#009E73", 
+                                                 "#0072B2", 
+                                                 "#CC79A7", 
+                                                 "#999999"),
+                    breaks = c("10", "20", 
+                               "30", "40", "100"),
+                    labels = c(expression(~delta~" = 10"), 
+                               expression(~delta~" = 20"), 
+                               expression(~delta~" = 30"),   
+                               expression(~delta~" = 40"),
+                               " MLE")) +
+  theme_bw(base_family = "Times", 
+           base_size = 13) +
+  theme(legend.position = "top", 
+        strip.background = element_rect(fill = "grey93"),
+        panel.grid.minor.y = element_blank(),
+        legend.background = element_rect(color = "black"),
+        panel.grid = element_line(color = "grey93")) +
+  ylab("Score") +
+  xlab("Sample Size")
+
+# get legend
+leg <- cowplot::get_legend(plt_leg)
+```
+
+Simulation 4: Plot 3B
+```{r}
+plot_3B <- res_df_4_summ %>%
+  filter(method != "BF_null") %>%
+  ggplot(aes(x = as.factor(n), y = mu, group = delta, fill = as.factor(delta))) +
+  geom_errorbar(aes(ymax = up, ymin  = mu + 0, group = as.factor(delta)),
+                position = position_dodge(1), width = 0, size = 1) +
+  geom_bar(stat = "identity", position = position_dodge(1)) +
+  geom_errorbar(aes(ymax = mu, ymin  = low),
+                position = position_dodge(1),
+                width = 0,
+                size = 1,
+                color = "white") +
+  theme_bw() +
+  facet_grid(measure ~ groups) +
+  scale_fill_manual(name = "Method", values = c( "#009E73", "#0072B2", "#CC79A7", "#999999"),
+                    breaks = c("10", "20", "30", "40", "100"),
+                    labels = c(expression(~delta~" = 10"), 
+                               expression(~delta~" = 20"), 
+                               expression(~delta~" = 30"),   
+                               expression(~delta~" = 40"),
+                               " MLE")) +
+  theme_bw(base_family = "Times", base_size = 13) +
+  theme(legend.position = "note", strip.background = element_rect(fill = "grey93"),
+        panel.grid.minor.y = element_blank(),
+        legend.background = element_rect(color = "black"),
+        panel.grid = element_line(color = "grey93")) +
+  ylab("Score") +
+  xlab("Sample Size")
+
+# save(plot_3B, file = "plot_3B.Rdata")
+
+```
+
+
+Simulation 4: Plot 3C
+```{r}
+plot_3C <- res_df_4_summ %>%
+  filter(method != "BF_alt") %>%
+  filter(method != "mle") %>%
+  ggplot(aes(x = as.factor(n), 
+             y = mu, 
+             fill = as.factor(delta))) +
+  geom_errorbar(aes(ymax = up, 
+                    ymin  = mu), 
+                position = position_dodge(1), 
+                width = 0, 
+                size = 1) +
+  geom_bar(stat = "identity", 
+           position = position_dodge(1)) +
+  geom_errorbar(aes(ymax = mu, 
+                    ymin  = low),
+                position = position_dodge(1),
+                width = 0,
+                size = 1,
+                color = "white") +
+  theme_bw() +
+  facet_grid(measure~ groups) +
+  scale_fill_manual(name = "Method", values = c( "#009E73", "#0072B2", 
+                                                 "#CC79A7", "#999999")) +
+  theme_bw(base_family = "Times", 
+           base_size = 13) +
+  theme(legend.position = "none", 
+        strip.background = element_rect(fill = "grey93"),
+        panel.grid.minor.y = element_blank(),
+        legend.background = element_rect(color = "black"),
+        panel.grid = element_line(color = "grey93")) +
+  ylab("Score") +
+  xlab("Sample Size")
+
+# save(plot_3C, file = "plot_3C.Rdata")
+# plot_3C
+```
+
+
+
+Application: Plot 4 Aand B
+```{r, eval=FALSE}
+pcors_g1 <- corpcor::cor2pcor(BGGM::ptsd_cor1)
+pcors_g1_full <- ifelse(abs(pcors_g1) < 0.05, 0, pcors_g1)
+
+
+pcors_g2 <- corpcor::cor2pcor(BGGM::ptsd_cor2)
+pcors_g2_full <- ifelse(abs(pcors_g2) < 0.05, 0, pcors_g2)
+
+
+pcors_g3 <- corpcor::cor2pcor(BGGM::ptsd_cor3)
+pcors_g3_full <- ifelse(abs(pcors_g3) < 0.05, 0, pcors_g3)
+
+pcors_g4 <- corpcor::cor2pcor(BGGM::ptsd_cor4)
+pcors_g4_full <- ifelse(abs(pcors_g4) < 0.05, 0, pcors_g4)
+
+pcors_g1[1:12, 1:16] <- 0
+pcors_g1[14:16, 1:16] <- 0
+pcors_g1[13, 13] <- 0
+
+
+pcors_g2[1:12, 1:16] <- 0
+pcors_g2[14:16, 1:16] <- 0
+pcors_g2[13, 13] <- 0
+
+
+pcors_g3[1:12, 1:16] <- 0
+pcors_g3[14:16, 1:16] <- 0
+pcors_g3[13, 13] <- 0
+
+pcors_g4[1:12, 1:16] <- 0
+pcors_g4[14:16, 1:16] <- 0
+pcors_g4[13, 13] <- 0
+
+pdf(file = "plot_app_ppc.pdf",  
+    width = 7.5, 
+    height = 3.5)
+
+par(mfrow=c(2,4))
+
+qgraph(pcors_g1_full, 
+       label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73")
+
+qgraph(pcors_g2_full, 
+       label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73")
+
+qgraph(pcors_g3_full, 
+       label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73")
+
+qgraph(pcors_g4_full,  label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73")
+
+
+qgraph(pcors_g1, layout = "circle", 
+       label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73")
+qgraph(pcors_g2, layout = "circle", 
+       label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73")
+qgraph(pcors_g3, layout = "circle", 
+       label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73")
+
+qgraph(pcors_g4, layout = "circle", 
+       label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73")
+dev.off()
+
+```
+
+
+# Function for heatmaps
+```{r}
+GGM_compare_bf_plot <- function(X, cutoff){
+  
+  melt_01 <- reshape::melt(X$BF_01)
+  melt_10 <- reshape::melt(X$BF_10)
+
+  melt_01 <- subset(melt_01, value > cutoff)
+  melt_01$X1 <- as.factor(melt_01$X1)
+
+  max_01 <- log(max(melt_01$value))
+  
+  melt_10 <- subset(melt_10, value > cutoff)
+  melt_10$X1 <- as.factor(melt_10$X1)
+  max_10 <- log(max(melt_10$value))
+
+  plt_null <- ggplot(melt_01, aes(x = as.factor(X2),
+                                  y = as.factor(X1),
+                                  fill = log(value))) +
+    geom_tile() +
+    scale_fill_gradientn(colours = c("white", "yellow", "red"),
+                         values = c(0, .1, 1),
+                         limits = c(log(cutoff), max_01),
+                         labels = round(c(log(cutoff),    max_01)),
+                         breaks =  c(log(cutoff),  max_01),
+                         name = "BF 01") +
+
+    xlab("Null Hypothesis Matrix") + ylab(" ") +
+    ylim(rev(levels(melt_01$X1)))+
+    theme_bw(base_size = 12) +
+    theme(panel.grid = element_blank())  +
+    theme(panel.grid = element_blank(),
+          legend.title=element_text(size=9),
+          legend.text=element_text(size=9))
+  
+  plt_alt <- ggplot(melt_10, aes(x = as.factor(X2),
+                                 y = as.factor(X1),
+                                 fill = round(log(value)))) +
+    geom_tile() +
+    scale_fill_gradientn(colours = c("white", "lightblue", "purple"),
+                         values = c(0, .1, 1), limits = round(c(log(cutoff), max_10)),
+                         labels = round(c(log(cutoff),   max_10)),
+                         breaks =  round(c(log(cutoff),  max_10)),
+                         name = "BF 10") +
+    xlab("Alternative Hypothesis Matrix") + ylab(" ") +
+    ylim(rev(levels(melt_10$X1)))+
+    theme_bw(base_size = 12) +
+    theme(panel.grid = element_blank(),
+          legend.title=element_text(size=9),
+          legend.text=element_text(size=9))
+
+  list(plt_null = plt_null, plt_alt = plt_alt)
+}
+```
+
+# Application plot 5
+```{r}
+Y_g1 <- MASS::mvrnorm(n = 526, 
+                      mu = rep(0, 16), 
+                      Sigma = BGGM::ptsd_cor1, 
+                      empirical = T)
+
+Y_g2 <- MASS::mvrnorm(n = 365, 
+                      mu = rep(0, 16), 
+                      Sigma = BGGM::ptsd_cor2, 
+                      empirical = T)
+
+Y_g3 <- MASS::mvrnorm(n = 926, 
+                      mu = rep(0, 16), 
+                      Sigma = BGGM::ptsd_cor3, 
+                      empirical = T)
+
+Y_g4 <- MASS::mvrnorm(n = 956, 
+                      mu = rep(0, 16), 
+                      Sigma = BGGM::ptsd_cor4, 
+                      empirical = T)
+
+fit <- ggm_compare_bf(Y_g1, Y_g2, 
+                      Y_g3, Y_g4, 
+                      prior_sd = 0.22, 
+                      iter = 50000, 
+                      cores = 4)
+
+# select (BF = 3)
+fit_sel <- select(fit, BF_cut = 3)
+
+# plots
+plts <- GGM_compare_bf_plot(fit_sel, cutoff = 3)
+
+# null plot
+plt_null <- plts$plt_null + 
+  theme_bw(base_family = "Times", 
+           base_size = 11) + 
+  theme(panel.grid.major = element_blank(), 
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "top", 
+        legend.direction = "horizontal", 
+        legend.text = element_text(size = 8)) +
+  xlab("Null Matrix") 
+
+# alt plot
+plt_alt <- plts$plt_alt + 
+  theme_bw(base_family = "Times", base_size = 11) + 
+  theme(panel.grid.major = element_blank(),
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        legend.position = "top", 
+        legend.direction = "horizontal", 
+        legend.text = element_text(size = 8)) +
+  xlab("Alternative Matrix") 
+
+plot_5 <- plot_grid("", plt_null, "" , 
+                    plt_alt, "", nrow = 1, 
+                    rel_widths = c(.05,1,0.25,1,0.05))
+
+# ggsave(plot_5, 
+#        filename = "plot_5ms.pdf", 
+#        width = 7.5, 
+#        height = 3.75)
+```
+
+# Appendix: Network plot
+```{r}
+# base line
+pcor4 <- corpcor::cor2pcor(as.matrix(BGGM::ptsd_cor4))
+baseline <- ifelse(abs(pcor4) < 0.05, 0, pcor4) 
+
+cut <- ifelse(abs(baseline) < 0.075, 0, baseline)
+
+reduce <- baseline
+reduce[1,3] <-  baseline[1,3] *.75 
+reduce[3,1] <- reduce[1,3]
+
+cut_n_reduce <- ifelse(abs(reduce) < 0.075, 0, reduce)
+
+pdf(file = "plot_appendix.pdf",  
+    width = 7.5, 
+    height = 2.5)
+
+par(mfrow=c(1,4))
+qgraph(baseline, label.cex = 2,
+        negCol = "#D55E00", 
+       posCol = "#009E73", 
+       title = "Baseline")
+
+qgraph(cut, label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73", 
+       title = "Cut")
+
+qgraph(reduce, label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73", 
+       title = "Reduce")
+
+qgraph(cut_n_reduce, label.cex = 2,
+       negCol = "#D55E00", 
+       posCol = "#009E73", 
+       title = "Both")
+dev.off()
+```
+
+# Plot 1
+```{r}
+load("plot_1A.Rdata")
+load("plot_1B.Rdata")
+load("plot_1C.Rdata")
+
+# top
+top <- plot_grid(plot_1A, "", plot_1C, 
+                 nrow = 1, rel_widths = c(1,0.2,1))
+
+bottom <- plot_grid("", plot_1B, "", nrow = 1, 
+                    rel_widths = c(0.05, 1, 0.05))
+# plot 1
+plot_1 <- plot_grid(top, bottom, nrow = 2, 
+                    rel_heights = c(.6, 1))
+
+# save
+ggsave(plot_1, 
+       filename = "plot_1ms.pdf", 
+       width = 8, 
+       height = 7.5)
+```
+
+
+Plot 3
+```{r}
+load("plot_3A.Rdata")
+load("plot_3B.Rdata")
+load("plot_3C.Rdata")
+
+plot_3 <- plot_grid("", leg, "", plot_3A, 
+                    plot_3B, plot_3C, 
+                    nrow = 6, 
+                    rel_heights = c(0.075, .1, 
+                                    0.05,  1, 1, 1))
+
+ggsave(plot_3, filename = "plot_3ms.pdf", 
+       width = 8.5, height = 9.5)
+```
